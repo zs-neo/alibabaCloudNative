@@ -1,0 +1,6 @@
+GET http://localhost:8081/getWrongTrace?traceIdList=asd&batchPos=1
+
+###
+GET http://localhost:8081/getWrongTrace
+
+###

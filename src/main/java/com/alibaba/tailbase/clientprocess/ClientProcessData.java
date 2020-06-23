@@ -45,7 +45,7 @@ public class ClientProcessData implements Runnable {
 	public void run() {
 		try {
 			String path = getPath();
-			// process data on client, not server
+			// process data on back, not server
 			if (StringUtils.isEmpty(path)) {
 				LOGGER.warn("path is empty");
 				return;
@@ -137,7 +137,7 @@ public class ClientProcessData implements Runnable {
 		}
 	}
 	
-	// notify backend process when client process has finished.
+	// notify backend process when back process has finished.
 	private void callFinish() {
 		try {
 			Request request = new Request.Builder().url("http://127.0.0.1:8002/finish").build();
@@ -167,7 +167,7 @@ public class ClientProcessData implements Runnable {
 		getWrongTraceWithBatch(previous, pos, traceIdList, wrongTraceMap);
 		getWrongTraceWithBatch(pos, pos, traceIdList, wrongTraceMap);
 		getWrongTraceWithBatch(next, pos, traceIdList, wrongTraceMap);
-		// to clear spans, don't block client process thread. TODO to use lock/notify
+		// to clear spans, don't block back process thread. TODO to use lock/notify
 		BATCH_TRACE_LIST.get(previous).clear();
 		return JSON.toJSONString(wrongTraceMap);
 	}

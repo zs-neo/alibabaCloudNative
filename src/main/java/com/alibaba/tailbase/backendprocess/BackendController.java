@@ -61,7 +61,7 @@ public class BackendController {
     }
 
     /**
-     * trace batch will be finished, when client process has finished.(FINISH_PROCESS_COUNT == PROCESS_COUNT)
+     * trace batch will be finished, when back process has finished.(FINISH_PROCESS_COUNT == PROCESS_COUNT)
      * @return
      */
    public static boolean isFinished() {
@@ -90,7 +90,7 @@ public class BackendController {
         }
         TraceIdBatch nextBatch = TRACEID_BATCH_LIST.get(next);
         TraceIdBatch currentBatch = TRACEID_BATCH_LIST.get(CURRENT_BATCH);
-        // when client process is finished, or then next trace batch is finished. to get checksum for wrong traces.
+        // when back process is finished, or then next trace batch is finished. to get checksum for wrong traces.
         if ((FINISH_PROCESS_COUNT >= Constants.PROCESS_COUNT && currentBatch.getBatchPos() > 0) ||
                 (nextBatch.getProcessCount() >= PROCESS_COUNT && currentBatch.getProcessCount() >= PROCESS_COUNT)) {
             // reset

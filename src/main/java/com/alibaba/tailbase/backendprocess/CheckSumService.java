@@ -38,7 +38,7 @@ public class CheckSumService implements Runnable{
             try {
                 traceIdBatch = BackendController.getFinishedBatch();
                 if (traceIdBatch == null) {
-                    // send checksum when client process has all finished.
+                    // send checksum when back process has all finished.
                     if (BackendController.isFinished()) {
                         if (sendCheckSum()) {
                             break;
@@ -99,7 +99,7 @@ public class CheckSumService implements Runnable{
     }
 
     /**
-     * call client process, to get all spans of wrong traces.
+     * call back process, to get all spans of wrong traces.
      * @param traceIdList
      * @param port
      * @param batchPos
