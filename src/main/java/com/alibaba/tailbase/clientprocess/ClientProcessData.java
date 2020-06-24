@@ -9,17 +9,16 @@ import com.alibaba.tailbase.Utils;
 import okhttp3.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.util.StringUtils;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.Proxy;
 import java.net.URL;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
-
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class ClientProcessData implements Runnable {
 	
@@ -42,17 +41,21 @@ public class ClientProcessData implements Runnable {
 		}
 	}
 	
+	private final Lock lock = new ReentrantLock();
+	private final Condition notEmpty = lock.newCondition();
+	
 	@Override
 	public void run() {
 		String path = getPath();
 		try {
 			URL url = new URL(path);
 			LOGGER.info("data path:" + path);
-//			HttpURLConnection httpConnection = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
-//			InputStream input = httpConnection.getInputStream();
-//			BufferedReader bf = new BufferedReader(new InputStreamReader(input));
-			InputStream input = url.openStream();
+			HttpURLConnection httpConnection = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
+			InputStream input = httpConnection.getInputStream();
 			BufferedReader bf = new BufferedReader(new InputStreamReader(input));
+			
+//			InputStream input = url.openStream();
+//			BufferedReader bf = new BufferedReader(new InputStreamReader(input));
 			String line;
 			int count = 0;
 			int pos = 0;
@@ -80,18 +83,25 @@ public class ClientProcessData implements Runnable {
 						pos = 0;
 					}
 					traceMap = TRACE_CACHE.get(pos);
-					if (traceMap.size() > 0) {
-						while (true) {
-							try {
-								Thread.sleep(10);
+					try {
+						lock.lock();
+//						if (traceMap.size() > 0) {
+							while (traceMap.size() > 0) {
+//								Thread.sleep(10);
+								notEmpty.await();
 								LOGGER.warn("client sleeping");
 								if (traceMap.size() == 0) {
 									break;
 								}
-							} catch (Exception e) {
-								e.printStackTrace();
 							}
-						}
+							if (traceMap.size() <= 0) {
+								notEmpty.signal();
+							}
+//						}
+					} catch (Exception e) {
+						e.printStackTrace();
+					}finally {
+						lock.unlock();
 					}
 					int batchPos = count / Constants.BATCH_SIZE - 1;
 					updateWrongeTraceId(badTraceIds, batchPos);
@@ -102,9 +112,11 @@ public class ClientProcessData implements Runnable {
 			bf.close();
 			input.close();
 			callFinish();
-		} catch (IOException e) {
+		} catch (
+				IOException e) {
 			LOGGER.warn("拉数据时异常");
 		}
+		
 	}
 	
 	public void updateWrongeTraceId(Set<String> badTraceIds, int batchPos) {
@@ -179,13 +191,13 @@ public class ClientProcessData implements Runnable {
 	private String getPath() {
 		String port = System.getProperty("server.port", "8080");
 		if ("8000".equals(port)) {
-//            return "http://localhost:" + CommonController.getDataSourcePort() + "/trace1.data";
+            return "http://localhost:" + CommonController.getDataSourcePort() + "/trace1.data";
 //            return "http://118.31.11.163:6868/files/trace1.data";
-			return "file:///天池大赛/trace1.data";
+//			return "file:///天池大赛/trace1.data";
 		} else if ("8001".equals(port)) {
-//            return "http://localhost:" + CommonController.getDataSourcePort() + "/trace2.data";
+            return "http://localhost:" + CommonController.getDataSourcePort() + "/trace2.data";
 //            return "http://118.31.11.163:6868/files/trace2.data";
-			return "file:///天池大赛/trace2.data";
+//			return "file:///天池大赛/trace2.data";
 		} else {
 			return null;
 		}

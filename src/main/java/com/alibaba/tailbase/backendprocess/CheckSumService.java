@@ -70,7 +70,6 @@ public class CheckSumService implements Runnable {
 					String spans = spanSet.stream().sorted(
 							Comparator.comparing(CheckSumService::getStartTime)).collect(Collectors.joining("\n"));
 					spans = spans + "\n";
-					LOGGER.info("final ID:{} , data= {}", traceId, spans);
 					TRACE_CHUCKSUM_MAP.put(traceId, Utils.MD5(spans));
 				}
 			} catch (Exception e) {
