@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URL;
@@ -24,29 +25,27 @@ public class ClientProcessData implements Runnable {
 	
 	private static final Logger LOGGER = LoggerFactory.getLogger(ClientProcessData.class.getName());
 	
-	private static List<Map<String, List<String>>> BATCH_TRACE_LIST = new ArrayList<>();
-	private static int BATCH_COUNT = 90;
+	private static List<Map<String, List<String>>> TRACE_CACHE;
 	
-	public static void init() {
-		for (int i = 0; i < BATCH_COUNT; i++) {
-			BATCH_TRACE_LIST.add(new ConcurrentHashMap<>(Constants.BATCH_SIZE));
-		}
+	public ClientProcessData() {
+		init();
 	}
 	
 	public static void start() {
-		Thread t = new Thread(new ClientProcessData(), "ProcessDataThread");
-		t.start();
+		new Thread(new ClientProcessData(), "ClientProcessData").start();
+	}
+	
+	public static void init() {
+		TRACE_CACHE = new ArrayList<>(Constants.CACHE_SIZE);
+		for (int i = 0; i < Constants.CACHE_SIZE; i++) {
+			TRACE_CACHE.add(new ConcurrentHashMap<>(Constants.BATCH_SIZE));
+		}
 	}
 	
 	@Override
 	public void run() {
+		String path = getPath();
 		try {
-			String path = getPath();
-			// process data on client, not server
-			if (StringUtils.isEmpty(path)) {
-				LOGGER.warn("path is empty");
-				return;
-			}
 			URL url = new URL(path);
 			LOGGER.info("data path:" + path);
 //			HttpURLConnection httpConnection = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
@@ -55,136 +54,124 @@ public class ClientProcessData implements Runnable {
 			InputStream input = url.openStream();
 			BufferedReader bf = new BufferedReader(new InputStreamReader(input));
 			String line;
-			long count = 0;
+			int count = 0;
 			int pos = 0;
-			Set<String> badTraceIdList = new HashSet<>(1000);
-			Map<String, List<String>> traceMap = BATCH_TRACE_LIST.get(pos);
+			Set<String> badTraceIds = new HashSet<>(Constants.BADLIST_INIT_SIZE);
+			Map<String, List<String>> traceMap = TRACE_CACHE.get(pos);
 			while ((line = bf.readLine()) != null) {
 				count++;
-				String[] cols = line.split("\\|");
-				if (cols != null && cols.length > 1) {
-					String traceId = cols[0];
-					List<String> spanList = traceMap.get(traceId);
-					if (spanList == null) {
-						spanList = new ArrayList<>();
-						traceMap.put(traceId, spanList);
-					}
-					spanList.add(line);
-					if (cols.length > 8) {
-						String tags = cols[8];
-						if (tags != null) {
-							if (tags.contains("error=1")) {
-								badTraceIdList.add(traceId);
-							} else if (tags.contains("http.status_code=") && tags.indexOf("http.status_code=200") < 0) {
-								badTraceIdList.add(traceId);
-							}
-						}
-					}
+				String[] rowItem = line.split("\\|");
+				String traceId = rowItem[0];
+				String status = rowItem[8];
+				List<String> spanList = traceMap.get(traceId);
+				if (spanList == null) {
+					spanList = new ArrayList<>();
+					traceMap.put(traceId, spanList);
+				}
+				spanList.add(line);
+				if (status.contains("error=1")) {
+					badTraceIds.add(traceId);
+				} else if (status.contains("http.status_code=") && status.indexOf("http.status_code=200") < 0) {
+					badTraceIds.add(traceId);
 				}
 				if (count % Constants.BATCH_SIZE == 0) {
 					pos++;
-					if (pos >= BATCH_COUNT) {
+					if (pos >= Constants.CACHE_SIZE) {
 						pos = 0;
 					}
-					traceMap = BATCH_TRACE_LIST.get(pos);
+					traceMap = TRACE_CACHE.get(pos);
 					if (traceMap.size() > 0) {
 						while (true) {
-							Thread.sleep(10);
-							if (traceMap.size() == 0) {
-								break;
+							try {
+								Thread.sleep(10);
+								LOGGER.warn("client sleeping");
+								if (traceMap.size() == 0) {
+									break;
+								}
+							} catch (Exception e) {
+								e.printStackTrace();
 							}
 						}
 					}
-					int batchPos = (int) count / Constants.BATCH_SIZE - 1;
-					updateWrongTraceId(badTraceIdList, batchPos);
-					badTraceIdList.clear();
-					LOGGER.info("suc to updateBadTraceId, batchPos:" + batchPos);
+					int batchPos = count / Constants.BATCH_SIZE - 1;
+					updateWrongeTraceId(badTraceIds, batchPos);
+					badTraceIds.clear();
 				}
 			}
-			updateWrongTraceId(badTraceIdList, (int) (count / Constants.BATCH_SIZE - 1));
+			updateWrongeTraceId(badTraceIds, count / Constants.BATCH_SIZE - 1);
 			bf.close();
 			input.close();
 			callFinish();
-		} catch (Exception e) {
-			LOGGER.warn("fail to process data", e);
+		} catch (IOException e) {
+			LOGGER.warn("拉数据时异常");
 		}
 	}
 	
-	/**
-	 * call backend controller to update wrong tradeId list.
-	 *
-	 * @param badTraceIdList
-	 * @param batchPos
-	 */
-	private void updateWrongTraceId(Set<String> badTraceIdList, int batchPos) {
-		String json = JSON.toJSONString(badTraceIdList);
-		if (badTraceIdList.size() > 0) {
+	public void updateWrongeTraceId(Set<String> badTraceIds, int batchPos) {
+		if (badTraceIds.size() == 0) {
+			return;
+		}
+		String json = JSON.toJSONString(badTraceIds);
+		if (badTraceIds.size() > 0) {
 			try {
 				LOGGER.info("updateBadTraceId, json:" + json + ", batch:" + batchPos);
 				JSONObject data = new JSONObject();
 				data.put("traceIdListJson", json);
 				data.put("batchPos", batchPos);
 				RequestBody body = RequestBody.create(MediaType.parse("application/json"), JSONObject.toJSONString(data));
-				Request request = new Request.Builder().url("http://127.0.0.1:8002/setWrongTraceId").post(body).build();
+				Request request = new Request.Builder().url("http://localhost:8002/setWrongTraceId").post(body).build();
 				Response response = Utils.callHttp(request);
 				response.close();
 			} catch (Exception e) {
-				LOGGER.warn("fail to updateBadTraceId, json:" + json + ", batch:" + batchPos);
+				LOGGER.warn("向后端更新异常链路失败 " + json + " " + batchPos);
 			}
 		}
 	}
 	
-	private void callFinish() {
+	public void callFinish() {
 		try {
-			Request request = new Request.Builder().url("http://127.0.0.1:8002/finish").build();
+			Request request = new Request.Builder().url("http://localhost:8002/finish").build();
 			Response response = Utils.callHttp(request);
 			response.close();
 		} catch (Exception e) {
-			LOGGER.warn("fail to callFinish");
+			LOGGER.warn("请求finish异常");
 		}
 	}
 	
 	
-	public static String getWrongTracing(String wrongTraceIdList, int batchPos) {
-		LOGGER.info(String.format("getWrongTracing, batchPos:%d, wrongTraceIdList:\n %s",
-				batchPos, wrongTraceIdList));
-		List<String> traceIdList = JSON.parseObject(wrongTraceIdList, new TypeReference<List<String>>() {
+	public static String getWrongeTracing(String wrongTraceIdListJson, int batchPos) {
+		List<String> wrongTraceIdList = JSON.parseObject(wrongTraceIdListJson, new TypeReference<List<String>>() {
 		});
-		Map<String, List<String>> wrongTraceMap = new HashMap<>();
-		int pos = batchPos % BATCH_COUNT;
+		Map<String, List<String>> wrongeTraceMap = new HashMap<>();
+		int pos = batchPos % Constants.CACHE_SIZE;
 		int previous = pos - 1;
-		if (previous == -1) {
-			previous = BATCH_COUNT - 1;
+		if (previous < 0) {
+			previous = Constants.CACHE_SIZE - 1;
 		}
 		int next = pos + 1;
-		if (next == BATCH_COUNT) {
+		if (next == Constants.CACHE_SIZE) {
 			next = 0;
 		}
-		getWrongTraceWithBatch(previous, pos, traceIdList, wrongTraceMap);
-		getWrongTraceWithBatch(pos, pos, traceIdList, wrongTraceMap);
-		getWrongTraceWithBatch(next, pos, traceIdList, wrongTraceMap);
-		// to clear spans, don't block client process thread. TODO to use lock/notify
-		BATCH_TRACE_LIST.get(previous).clear();
-		return JSON.toJSONString(wrongTraceMap);
+		getWrongTraceWithBatch(previous, pos, wrongTraceIdList, wrongeTraceMap);
+		getWrongTraceWithBatch(pos, pos, wrongTraceIdList, wrongeTraceMap);
+		getWrongTraceWithBatch(next, pos, wrongTraceIdList, wrongeTraceMap);
+		TRACE_CACHE.get(previous).clear();
+		LOGGER.info("clear batch " + previous);
+		return JSON.toJSONString(wrongeTraceMap);
 	}
 	
-	private static void getWrongTraceWithBatch(int batchPos, int pos, List<String> traceIdList, Map<String, List<String>> wrongTraceMap) {
-		// donot lock traceMap,  traceMap may be clear anytime.
-		Map<String, List<String>> traceMap = BATCH_TRACE_LIST.get(batchPos);
-		for (String traceId : traceIdList) {
-			List<String> spanList = traceMap.get(traceId);
-			if (spanList != null) {
-				// one trace may cross to batch (e.g batch size 20000, span1 in line 19999, span2 in line 20001)
-				List<String> existSpanList = wrongTraceMap.get(traceId);
+	public static void getWrongTraceWithBatch(int batchPos, int pos, List<String> wrongTraceIdList, Map<String, List<String>> wrongTraceMap) {
+		Map<String, List<String>> traceMap = TRACE_CACHE.get(batchPos);
+		for (int i = 0; i < wrongTraceIdList.size(); i++) {
+			String wrongeTraceId = wrongTraceIdList.get(i);
+			List<String> spans = traceMap.get(wrongeTraceId);
+			if (spans != null) {
+				List<String> existSpanList = wrongTraceMap.get(wrongeTraceId);
 				if (existSpanList != null) {
-					existSpanList.addAll(spanList);
+					existSpanList.addAll(spans);
 				} else {
-					wrongTraceMap.put(traceId, spanList);
+					wrongTraceMap.put(wrongeTraceId, spans);
 				}
-				// output spanlist to check
-				String spanListString = spanList.stream().collect(Collectors.joining("\n"));
-				LOGGER.info(String.format("getWrongTracing, batchPos:%d, pos:%d, traceId:%s, spanList:\n %s",
-						batchPos, pos, traceId, spanListString));
 			}
 		}
 	}
@@ -192,10 +179,12 @@ public class ClientProcessData implements Runnable {
 	private String getPath() {
 		String port = System.getProperty("server.port", "8080");
 		if ("8000".equals(port)) {
-//			return "http://127.0.0.1:" + CommonController.getDataSourcePort() + "/trace1.data";
-			return "file:///天池大赛/trace2.data";
+//            return "http://localhost:" + CommonController.getDataSourcePort() + "/trace1.data";
+//            return "http://118.31.11.163:6868/files/trace1.data";
+			return "file:///天池大赛/trace1.data";
 		} else if ("8001".equals(port)) {
-//			return "http://127.0.0.1:" + CommonController.getDataSourcePort() + "/trace2.data";
+//            return "http://localhost:" + CommonController.getDataSourcePort() + "/trace2.data";
+//            return "http://118.31.11.163:6868/files/trace2.data";
 			return "file:///天池大赛/trace2.data";
 		} else {
 			return null;

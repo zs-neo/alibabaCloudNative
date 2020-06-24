@@ -66,12 +66,15 @@ public class CheckSumService implements Runnable {
 				for (Map.Entry<String, Set<String>> entry : map.entrySet()) {
 					String traceId = entry.getKey();
 					Set<String> spanSet = entry.getValue();
+					// order span with startTime
 					String spans = spanSet.stream().sorted(
 							Comparator.comparing(CheckSumService::getStartTime)).collect(Collectors.joining("\n"));
 					spans = spans + "\n";
+					LOGGER.info("final ID:{} , data= {}", traceId, spans);
 					TRACE_CHUCKSUM_MAP.put(traceId, Utils.MD5(spans));
 				}
 			} catch (Exception e) {
+				// record batchPos when an exception  occurs.
 				int batchPos = 0;
 				if (traceIdBatch != null) {
 					batchPos = traceIdBatch.getBatchPos();

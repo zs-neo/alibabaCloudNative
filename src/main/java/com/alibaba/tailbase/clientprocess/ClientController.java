@@ -14,7 +14,7 @@ public class ClientController {
 
     @RequestMapping("/getWrongTrace")
     public String getWrongTrace(@RequestParam String traceIdList, @RequestParam Integer batchPos) {
-        String json = ClientProcessData.getWrongTracing(traceIdList, batchPos);
+        String json = ClientProcessData.getWrongeTracing(traceIdList, batchPos);
         LOGGER.info("suc to getWrongTrace, batchPos:" + batchPos);
         return json;
     }
