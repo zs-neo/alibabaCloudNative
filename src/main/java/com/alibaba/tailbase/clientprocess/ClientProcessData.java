@@ -11,13 +11,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.Proxy;
-import java.net.URL;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class ClientProcessData implements Runnable {
@@ -25,13 +23,10 @@ public class ClientProcessData implements Runnable {
 	private static final Logger LOGGER = LoggerFactory.getLogger(ClientProcessData.class.getName());
 	
 	private static List<Map<String, List<String>>> TRACE_CACHE;
+	private final ExecutorService exector = Executors.newFixedThreadPool(20);
 	
 	public ClientProcessData() {
 		init();
-	}
-	
-	public static void start() {
-		new Thread(new ClientProcessData(), "ClientProcessData").start();
 	}
 	
 	public static void init() {
@@ -41,80 +36,96 @@ public class ClientProcessData implements Runnable {
 		}
 	}
 	
-	private final Lock lock = new ReentrantLock();
-	private final Condition notEmpty = lock.newCondition();
+	public static void start() {
+		new Thread(new ClientProcessData(), "ClientProcessData").start();
+	}
+	
+	private final static ReentrantLock LOCK = new ReentrantLock();
+	private final Condition isEmpty = LOCK.newCondition();
+	private final static int RANGE = 1024 * 10;
+	private volatile int POS = 0;
 	
 	@Override
 	public void run() {
-		String path = getPath();
+		String path = "http://118.31.11.163:6868/files/trace1.data";
+//		String path = getPath();
+		int rangeFrom = 0;
+		int rangeTo = RANGE - 1;
+		int count = 0;
+		Set<java.lang.String> badTraceIds = new HashSet<>(Constants.BADLIST_INIT_SIZE);
+		Map<java.lang.String, List<String>> traceMap = TRACE_CACHE.get(POS);
 		try {
-			// todo Range: bytes=0-1023
-			URL url = new URL(path);
-			LOGGER.info("data path:" + path);
-			HttpURLConnection httpConnection = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
-			InputStream input = httpConnection.getInputStream();
-			BufferedReader bf = new BufferedReader(new InputStreamReader(input));
-			
-//			InputStream input = url.openStream();
-//			BufferedReader bf = new BufferedReader(new InputStreamReader(input));
-			String line;
-			int count = 0;
-			int pos = 0;
-			Set<String> badTraceIds = new HashSet<>(Constants.BADLIST_INIT_SIZE);
-			Map<String, List<String>> traceMap = TRACE_CACHE.get(pos);
-			while ((line = bf.readLine()) != null) {
-				count++;
-				String[] rowItem = line.split("\\|");
-				String traceId = rowItem[0];
-				String status = rowItem[8];
-				List<String> spanList = traceMap.get(traceId);
-				if (spanList == null) {
-					spanList = new ArrayList<>();
-					traceMap.put(traceId, spanList);
-				}
-				spanList.add(line);
-				if (status.contains("error=1")) {
-					badTraceIds.add(traceId);
-				} else if (status.contains("http.status_code=") && status.indexOf("http.status_code=200") < 0) {
-					badTraceIds.add(traceId);
+			Headers headers = new Headers.Builder().add("Range", "bytes=" + rangeFrom + "-" + rangeTo).build();
+			Request request = new Request.Builder().url(path).headers(headers).build();
+			Response response = Utils.callHttp(request);
+			byte[] data = response.body().bytes();
+			System.out.println(new String(data));
+			// 过滤数据找出问题trace, | = 124 , GET = 71 69 84 , 换行 = 10
+			int begin = 0;
+			int firstBlockIndex;
+			byte[] traceIdBytes = null;
+//			printData(data);
+			for (int i = 0; i < data.length; i++) {
+				// 本行结束，索引 begin-i
+				if (data[i] == 10) {
+					firstBlockIndex = 0;
+					byte[] line = new byte[i - begin];
+					for (int k = 0; k < i - begin; k++) {
+						line[k] = data[begin + k];
+						if (line[k] == 124 && firstBlockIndex == 0) {
+							firstBlockIndex = k;
+							traceIdBytes = new byte[firstBlockIndex];
+							for (int p = 0; p < firstBlockIndex; p++) {
+								traceIdBytes[p] = data[begin + p];
+							}
+						}
+					}
+					begin = i + 1;
+					String lineStr = new String(line);
+					String traceId = new String(traceIdBytes);
+					if (lineStr.contains("error=1") ||
+							((lineStr.contains("http.status_code=") && lineStr.indexOf("http.status_code=200") < 0))) {
+						badTraceIds.add(traceId);
+						LOGGER.info("add " + traceId);
+					}
+					List<String> spanList = traceMap.get(traceId);
+					if (spanList == null) {
+						spanList = new ArrayList<>();
+						traceMap.put(traceId, spanList);
+					}
+					spanList.add(new String(line));
 				}
 				if (count % Constants.BATCH_SIZE == 0) {
-					pos++;
-					if (pos >= Constants.CACHE_SIZE) {
-						pos = 0;
+					POS++;
+					if (POS >= Constants.CACHE_SIZE) {
+						POS = 0;
 					}
-					traceMap = TRACE_CACHE.get(pos);
-					try {
-						lock.lock();
-//						if (traceMap.size() > 0) {
+					traceMap = TRACE_CACHE.get(POS);
+					if (traceMap.size() > 0) {
+						try {
+							LOCK.lock();
 							while (traceMap.size() > 0) {
-//								Thread.sleep(10);
-								notEmpty.await();
+								isEmpty.await();
 								LOGGER.warn("client sleeping");
 								if (traceMap.size() == 0) {
+									isEmpty.signal();
 									break;
 								}
 							}
-							if (traceMap.size() <= 0) {
-								notEmpty.signal();
-							}
-//						}
-					} catch (Exception e) {
-						e.printStackTrace();
-					}finally {
-						lock.unlock();
+						} catch (Exception e) {
+							e.printStackTrace();
+						} finally {
+							LOCK.unlock();
+						}
 					}
 					int batchPos = count / Constants.BATCH_SIZE - 1;
 					updateWrongeTraceId(badTraceIds, batchPos);
 					badTraceIds.clear();
 				}
 			}
-			updateWrongeTraceId(badTraceIds, count / Constants.BATCH_SIZE - 1);
-			bf.close();
-			input.close();
-			callFinish();
-		} catch (
-				IOException e) {
+			// todo 保存多余的字节
+			
+		} catch (IOException e) {
 			LOGGER.warn("拉数据时异常");
 		}
 		
@@ -192,16 +203,31 @@ public class ClientProcessData implements Runnable {
 	private String getPath() {
 		String port = System.getProperty("server.port", "8080");
 		if ("8000".equals(port)) {
-            return "http://localhost:" + CommonController.getDataSourcePort() + "/trace1.data";
+			return "http://localhost:" + CommonController.getDataSourcePort() + "/trace1.data";
 //            return "http://118.31.11.163:6868/files/trace1.data";
 //			return "file:///天池大赛/trace1.data";
 		} else if ("8001".equals(port)) {
-            return "http://localhost:" + CommonController.getDataSourcePort() + "/trace2.data";
+			return "http://localhost:" + CommonController.getDataSourcePort() + "/trace2.data";
 //            return "http://118.31.11.163:6868/files/trace2.data";
 //			return "file:///天池大赛/trace2.data";
 		} else {
 			return null;
 		}
+	}
+	
+	public static void printData(byte[] data) {
+		for (int i = 0; i < data.length; i++) {
+			System.out.print(data[i] + " ");
+			if (data[i] == 10) {
+				System.out.println();
+			}
+		}
+		System.out.println();
+		System.out.println(new String(data));
+	}
+	
+	public static void main(String[] args) {
+		ClientProcessData.start();
 	}
 	
 }
