@@ -48,6 +48,7 @@ public class ClientProcessData implements Runnable {
 	public void run() {
 		String path = getPath();
 		try {
+			// todo Range: bytes=0-1023
 			URL url = new URL(path);
 			LOGGER.info("data path:" + path);
 			HttpURLConnection httpConnection = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
