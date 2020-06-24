@@ -1,6 +1,7 @@
 package com.alibaba.tailbase.clientprocess;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
 import com.alibaba.fastjson.TypeReference;
 import com.alibaba.tailbase.CommonController;
 import com.alibaba.tailbase.Constants;
@@ -13,8 +14,6 @@ import org.springframework.util.StringUtils;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.Proxy;
 import java.net.URL;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,9 +24,7 @@ public class ClientProcessData implements Runnable {
 	
 	private static final Logger LOGGER = LoggerFactory.getLogger(ClientProcessData.class.getName());
 	
-	// an list of trace map,like ring buffe.  key is traceId, value is spans ,  r
 	private static List<Map<String, List<String>>> BATCH_TRACE_LIST = new ArrayList<>();
-	// make 50 bucket to cache traceData
 	private static int BATCH_COUNT = 90;
 	
 	public static void init() {
@@ -52,8 +49,10 @@ public class ClientProcessData implements Runnable {
 			}
 			URL url = new URL(path);
 			LOGGER.info("data path:" + path);
-			HttpURLConnection httpConnection = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
-			InputStream input = httpConnection.getInputStream();
+//			HttpURLConnection httpConnection = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
+//			InputStream input = httpConnection.getInputStream();
+//			BufferedReader bf = new BufferedReader(new InputStreamReader(input));
+			InputStream input = url.openStream();
 			BufferedReader bf = new BufferedReader(new InputStreamReader(input));
 			String line;
 			long count = 0;
@@ -84,13 +83,10 @@ public class ClientProcessData implements Runnable {
 				}
 				if (count % Constants.BATCH_SIZE == 0) {
 					pos++;
-					// loop cycle
 					if (pos >= BATCH_COUNT) {
 						pos = 0;
 					}
 					traceMap = BATCH_TRACE_LIST.get(pos);
-					// donot produce data, wait backend to consume data
-					// TODO to use lock/notify
 					if (traceMap.size() > 0) {
 						while (true) {
 							Thread.sleep(10);
@@ -99,7 +95,6 @@ public class ClientProcessData implements Runnable {
 							}
 						}
 					}
-					// batchPos begin from 0, so need to minus 1
 					int batchPos = (int) count / Constants.BATCH_SIZE - 1;
 					updateWrongTraceId(badTraceIdList, batchPos);
 					badTraceIdList.clear();
@@ -126,8 +121,10 @@ public class ClientProcessData implements Runnable {
 		if (badTraceIdList.size() > 0) {
 			try {
 				LOGGER.info("updateBadTraceId, json:" + json + ", batch:" + batchPos);
-				RequestBody body = new FormBody.Builder()
-						.add("traceIdListJson", json).add("batchPos", batchPos + "").build();
+				JSONObject data = new JSONObject();
+				data.put("traceIdListJson", json);
+				data.put("batchPos", batchPos);
+				RequestBody body = RequestBody.create(MediaType.parse("application/json"), JSONObject.toJSONString(data));
 				Request request = new Request.Builder().url("http://127.0.0.1:8002/setWrongTraceId").post(body).build();
 				Response response = Utils.callHttp(request);
 				response.close();
@@ -137,7 +134,6 @@ public class ClientProcessData implements Runnable {
 		}
 	}
 	
-	// notify backend process when client process has finished.
 	private void callFinish() {
 		try {
 			Request request = new Request.Builder().url("http://127.0.0.1:8002/finish").build();
@@ -196,9 +192,11 @@ public class ClientProcessData implements Runnable {
 	private String getPath() {
 		String port = System.getProperty("server.port", "8080");
 		if ("8000".equals(port)) {
-			return "http://127.0.0.1:" + CommonController.getDataSourcePort() + "/trace1.data";
+//			return "http://127.0.0.1:" + CommonController.getDataSourcePort() + "/trace1.data";
+			return "file:///天池大赛/trace2.data";
 		} else if ("8001".equals(port)) {
-			return "http://127.0.0.1:" + CommonController.getDataSourcePort() + "/trace2.data";
+//			return "http://127.0.0.1:" + CommonController.getDataSourcePort() + "/trace2.data";
+			return "file:///天池大赛/trace2.data";
 		} else {
 			return null;
 		}
