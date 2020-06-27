@@ -7,7 +7,7 @@ public class Constants {
 	public static final String BACKEND_PROCESS_PORT1 = "8002";
 	public static final String BACKEND_PROCESS_PORT2 = "8003";
 	public static final String BACKEND_PROCESS_PORT3 = "8004";
-	public static final int CACHE_SIZE = 200;
+	public static final int CACHE_SIZE = 500;
 	
 	public final static int BADLIST_INIT_SIZE = 1000;
 	public static int BATCH_SIZE = 20000;

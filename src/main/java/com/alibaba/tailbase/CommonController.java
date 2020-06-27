@@ -24,7 +24,8 @@ public class CommonController {
 	public String setParamter(@RequestParam Integer port) {
 		DATA_SOURCE_PORT = port;
 		if (Utils.isClientProcess()) {
-			ClientProcessData.start();
+//			ClientProcessData.start();
+			new Thread(new ClientProcessData()).start();
 		}
 		return "suc";
 	}

@@ -9,13 +9,13 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 public class ClientController {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(ClientProcessData.class.getName());
-
-    @RequestMapping("/getWrongTrace")
-    public String getWrongTrace(@RequestParam String traceIdList, @RequestParam Integer batchPos) {
-        String json = ClientProcessData.getWrongeTracing(traceIdList, batchPos);
-        LOGGER.info("suc to getWrongTrace, batchPos:" + batchPos);
-        return json;
-    }
+	
+	private static final Logger LOGGER = LoggerFactory.getLogger(ClientProcessData.class.getName());
+	
+	@RequestMapping("/getWrongTrace")
+	public String getWrongTrace(@RequestParam String traceIdList, @RequestParam Integer batchPos) {
+		String json = ClientTask.getWrongeTracing(traceIdList, batchPos);
+		LOGGER.info("suc to getWrongTrace, batchPos:" + batchPos);
+		return json;
+	}
 }

@@ -36,6 +36,12 @@ public class CheckSumService implements Runnable {
 		String[] ports = new String[]{CLIENT_PROCESS_PORT1, CLIENT_PROCESS_PORT2};
 		while (true) {
 			try {
+				if (BackServerHandler.FINISH_PROCESS_COUNT >= 2) {
+					if (sendCheckSum()) {
+						LOGGER.warn("send checksum");
+						break;
+					}
+				}
 				traceIdBatch = BackServerHandler.getFinishedBatch();
 				if (traceIdBatch == null) {
 					if (BackServerHandler.isFinished()) {
@@ -118,7 +124,7 @@ public class CheckSumService implements Runnable {
 	}
 	
 	
-	private boolean sendCheckSum() {
+	public static boolean sendCheckSum() {
 		try {
 			String result = JSON.toJSONString(TRACE_CHUCKSUM_MAP);
 			RequestBody body = new FormBody.Builder()

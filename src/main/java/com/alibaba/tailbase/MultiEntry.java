@@ -4,6 +4,7 @@ import com.alibaba.tailbase.backendprocess.BackServer;
 import com.alibaba.tailbase.backendprocess.BackServerHandler;
 import com.alibaba.tailbase.backendprocess.CheckSumService;
 import com.alibaba.tailbase.clientprocess.ClientProcessData;
+import com.alibaba.tailbase.clientprocess.ClientTask;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.context.annotation.ComponentScan;
@@ -13,6 +14,7 @@ import org.springframework.context.annotation.ComponentScan;
 public class MultiEntry {
 	
 	public static void main(String[] args) {
+		ClientProcessData.beginTime = System.currentTimeMillis();
 		if (Utils.isBackendProcess()) {
 			CheckSumService.start();
 			BackServerHandler.init();
@@ -20,7 +22,7 @@ public class MultiEntry {
 			backServer.run();
 		}
 		if (Utils.isClientProcess()) {
-			ClientProcessData.init();
+			ClientTask.init();
 		}
 		String port = System.getProperty("server.port", "8080");
 		SpringApplication.run(MultiEntry.class,
